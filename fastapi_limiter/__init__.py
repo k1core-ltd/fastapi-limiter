@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from inspect import isawaitable
 from math import ceil
 from typing import TYPE_CHECKING
 
@@ -32,7 +33,7 @@ end
 
 async def default_identifier(request: Request | WebSocket) -> str:
     forwarded = request.headers.get("X-Forwarded-For")
-    ip = forwarded.split(",")[0] if forwarded else request.client.host
+    ip = forwarded.split(",")[0] if forwarded else request.client.host if request.client else "unknown"
     return ip + ":" + request.scope["path"]
 
 
@@ -70,13 +71,13 @@ async def ws_default_callback(ws: WebSocket, pexpire: int) -> None:  # noqa: ARG
 
 
 class FastAPILimiter:
-    redis: "Redis" = None
+    redis: "Redis"
     prefix: str | None = None
-    lua_sha: str | None = None
+    lua_sha: str
     identifier: Callable | None = None
     http_callback: Callable | None = None
     ws_callback: Callable | None = None
-    lua_script: str | None = None
+    lua_script: str
 
     @classmethod
     async def init(  # noqa: PLR0913
@@ -86,7 +87,7 @@ class FastAPILimiter:
         identifier: Callable = default_identifier,
         http_callback: Callable = http_default_callback,
         ws_callback: Callable = ws_default_callback,
-        lua_script: str | None = None,
+        lua_script: str = DEFAULT_LUA_SCRIPT,
     ) -> None:
         cls.redis = redis
 
@@ -101,8 +102,10 @@ class FastAPILimiter:
         cls.identifier = identifier
         cls.http_callback = http_callback
         cls.ws_callback = ws_callback
-        cls.lua_sha = await redis.script_load(lua_script or DEFAULT_LUA_SCRIPT)
+        cls.lua_sha = await redis.script_load(lua_script)
 
     @classmethod
     async def close(cls) -> None:
-        await cls.redis.close()
+        result = cls.redis.close()
+        if isawaitable(result):
+            await result  # pyright: ignore[reportGeneralTypeIssues]

@@ -35,7 +35,7 @@ dev = [
     "pytest-mock",
     "pytest-xdist",
     "requests",
-    "httpx",
+    "httpx2",
 ]
 
 [tool.uv.build-backend]

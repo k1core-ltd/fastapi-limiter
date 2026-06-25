@@ -1,11 +1,12 @@
 from collections.abc import Callable
+from inspect import isawaitable
 from typing import Annotated
 
 import redis as pyredis
 from fastapi import FastAPI
 from fastapi.requests import Request
 from fastapi.responses import Response
-from fastapi.routing import APIRoute, _IncludedRouter
+from fastapi.routing import APIRouter, APIRoute, _IncludedRouter
 from pydantic import Field
 from starlette.routing import Match, Route
 from starlette.websockets import WebSocket
@@ -13,20 +14,20 @@ from starlette.websockets import WebSocket
 from fastapi_limiter import FastAPILimiter
 
 
-def _flatten_routes(app: "FastAPI") -> list[APIRoute | Route]:
+def _flatten_routes(app: "FastAPI | APIRouter") -> list[APIRoute | Route]:
     routes: list[APIRoute | Route] = []
     for route in app.routes:
         if isinstance(route, (APIRoute, Route)):
             routes.append(route)
         elif hasattr(route, "original_router"):
-            route: _IncludedRouter
+            assert isinstance(route, _IncludedRouter)
             routes.extend(_flatten_routes(route.original_router))
         else:
             raise Exception(f"Unknown route type: {type(route)}")
     return routes
 
 
-class RateLimiter:
+class RateLimiterBase:
     def __init__(  # noqa: PLR0913
         self,
         times: Annotated[int, Field(ge=0)] = 1,
@@ -54,6 +55,8 @@ class RateLimiter:
             str(self.milliseconds),
         )
 
+
+class RateLimiter(RateLimiterBase):
     async def __call__(
         self,
         request: Request,
@@ -86,15 +89,34 @@ class RateLimiter:
 
         # moved here because constructor run before app startup
         identifier = self.identifier or FastAPILimiter.identifier
+
+        if not identifier:
+            raise Exception(
+                "You must provide an identifier function for RateLimiter (either in the constructor or in FastAPILimiter.init)"
+            )
+
         callback = self.callback or FastAPILimiter.http_callback
+
+        if not callback:
+            raise Exception(
+                "You must provide a callback function for RateLimiter (either in the constructor or in FastAPILimiter.init)"
+            )
+
         rate_key = await identifier(request)
         key = f"{FastAPILimiter.prefix}:{rate_key}:{route_index}:{dep_index}"
         try:
             pexpire = await self._check(key)
         except pyredis.exceptions.NoScriptError:
-            FastAPILimiter.lua_sha = await FastAPILimiter.redis.script_load(
+            result = FastAPILimiter.redis.script_load(
                 FastAPILimiter.lua_script
             )
+
+            if isawaitable(result):
+                result = await result
+                assert isinstance(result, str), "Lua script SHA must be a string"
+
+            FastAPILimiter.lua_sha = result
+
             pexpire = await self._check(key)
 
         if pexpire != 0:
@@ -103,7 +125,7 @@ class RateLimiter:
         return None
 
 
-class WebSocketRateLimiter(RateLimiter):
+class WebSocketRateLimiter(RateLimiterBase):
     async def __call__(
         self,
         ws: WebSocket,
@@ -115,10 +137,21 @@ class WebSocketRateLimiter(RateLimiter):
             )
 
         identifier = self.identifier or FastAPILimiter.identifier
+
+        if not identifier:
+            raise Exception(
+                "You must provide an identifier function for WebSocketRateLimiter (either in the constructor or in FastAPILimiter.init)"
+            )
+
         rate_key = await identifier(ws)
         key = f"{FastAPILimiter.prefix}:ws:{rate_key}:{context_key}"
         pexpire = await self._check(key)
         callback = self.callback or FastAPILimiter.ws_callback
+
+        if not callback:
+            raise Exception(
+                "You must provide a callback function for WebSocketRateLimiter (either in the constructor or in FastAPILimiter.init)"
+            )
 
         if pexpire != 0:
             return await callback(ws, pexpire)

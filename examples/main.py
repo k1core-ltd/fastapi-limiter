@@ -5,18 +5,17 @@ from fastapi import Depends, FastAPI, HTTPException, WebSocket
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter, WebSocketRateLimiter
 
-app = FastAPI()
 
-
-@app.on_event("startup")
-async def startup():
+async def lifespan(app: FastAPI):
     r = redis.from_url("redis://localhost", encoding="utf8")
     await FastAPILimiter.init(r)
-
-
-@app.on_event("shutdown")
-async def shutdown():
+    yield
     await FastAPILimiter.close()
+
+
+app = FastAPI(
+    lifespan=lifespan,
+)
 
 
 @app.get("/", dependencies=[Depends(RateLimiter(times=2, seconds=5))])
@@ -54,4 +53,4 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", debug=True, reload=True)
+    uvicorn.run("main:app", reload=True)
