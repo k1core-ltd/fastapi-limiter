@@ -1,5 +1,4 @@
 from collections.abc import Callable
-from inspect import isawaitable
 from math import ceil
 from typing import TYPE_CHECKING
 
@@ -11,6 +10,7 @@ from starlette.websockets import WebSocket
 
 if TYPE_CHECKING:
     from redis import Redis
+    from redis.asyncio import Redis as AsyncRedis
 
 DEFAULT_LUA_SCRIPT = """
 local key = KEYS[1]
@@ -71,7 +71,7 @@ async def ws_default_callback(ws: WebSocket, pexpire: int) -> None:  # noqa: ARG
 
 
 class FastAPILimiter:
-    redis: "Redis"
+    redis: "AsyncRedis | Redis"
     prefix: str | None = None
     lua_sha: str
     identifier: Callable | None = None
@@ -106,6 +106,6 @@ class FastAPILimiter:
 
     @classmethod
     async def close(cls) -> None:
-        result = cls.redis.close()
-        if isawaitable(result):
-            await result  # pyright: ignore[reportGeneralTypeIssues]
+        if hasattr(cls.redis, "aclose"):
+            return await cls.redis.aclose()  # ty: ignore
+        return cls.redis.close()
