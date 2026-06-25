@@ -6,7 +6,7 @@ import redis as pyredis
 from fastapi import FastAPI
 from fastapi.requests import Request
 from fastapi.responses import Response
-from fastapi.routing import APIRouter, APIRoute, _IncludedRouter
+from fastapi.routing import APIRouter, APIRoute, _IncludedRouter, APIWebSocketRoute
 from pydantic import Field
 from starlette.routing import Match, Route
 from starlette.websockets import WebSocket
@@ -14,10 +14,10 @@ from starlette.websockets import WebSocket
 from fastapi_limiter import FastAPILimiter
 
 
-def _flatten_routes(app: "FastAPI | APIRouter") -> list[APIRoute | Route]:
-    routes: list[APIRoute | Route] = []
+def _flatten_routes(app: "FastAPI | APIRouter") -> list[APIRoute | Route | APIWebSocketRoute]:
+    routes: list[APIRoute | Route | APIWebSocketRoute] = []
     for route in app.routes:
-        if isinstance(route, (APIRoute, Route)):
+        if isinstance(route, (APIRoute, Route, APIWebSocketRoute)):
             routes.append(route)
         elif hasattr(route, "original_router"):
             assert isinstance(route, _IncludedRouter)
@@ -80,7 +80,7 @@ class RateLimiter(RateLimiterBase):
                 if not hasattr(route, "dependencies"):
                     continue
 
-                assert isinstance(route, APIRoute)
+                assert isinstance(route, (APIRoute, APIWebSocketRoute))
 
                 for j, dependency in enumerate(route.dependencies):
                     if self is dependency.dependency:
